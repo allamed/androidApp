@@ -1,58 +1,99 @@
 package com.allray.todo.list
 
+import com.allray.todo.data.Api
+
+import android.content.Intent
 import android.os.Bundle
+import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.fragment.app.Fragment
-import androidx.recyclerview.widget.RecyclerView
-import com.allray.todo.R
-import com.allray.todo.R.layout.fragment_task_list
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.lifecycleScope
 import com.allray.todo.Task
 import com.allray.todo.databinding.FragmentTaskListBinding
-import com.google.android.material.floatingactionbutton.FloatingActionButton
-import java.util.UUID
+import com.allray.todo.detail.DetailActivity
+import kotlinx.coroutines.launch
 
 class TaskListFragment : Fragment() {
-    private var taskList = listOf(
-        Task(id = "id_1", title = "Task 1", description = "description 1"),
-        Task(id = "id_2", title = "Task 2"),
-        Task(id = "id_3", title = "Task 3")
-    )
-    private val adapter = TaskListAdapter()
-    private lateinit var floatingActionButton: FloatingActionButton
-    private var _binding: FragmentTaskListBinding? = null
-    private val binding get() = _binding!!
-    override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View? {
+    private lateinit var binding: FragmentTaskListBinding
 
-        _binding = FragmentTaskListBinding.inflate(inflater, container, false)
+    private val adapterListener : TaskListListener = object : TaskListListener {
+
+        override fun onClickDelete(task: Task) {
+            viewModel.delete(task)
+        }
+
+        override fun onClickEdit(task: Task) {
+            val intent = Intent(context, DetailActivity::class.java)
+            intent.putExtra("task", task)
+            editTask.launch(intent)
+        }
+
+        override fun onLongClick(task: Task) {
+            val shareIntent: Intent = Intent().apply {
+                action = Intent.ACTION_SEND
+                putExtra(Intent.EXTRA_TEXT, task.description)
+                type = "text/plain"
+            }
+            startActivity(Intent.createChooser(shareIntent, null))
+        }
+    }
+
+    private val adapter = TaskListAdapter(adapterListener)
+
+    private val editTask =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                result ->
+            val task = result.data?.getSerializableExtra("task") as Task? ?: return@registerForActivityResult
+            viewModel.update(task)
+        }
+
+    private val createTask =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                result ->
+            val task = result.data?.getSerializableExtra("task") as Task? ?: return@registerForActivityResult
+            viewModel.create(task)
+        }
+
+    private val viewModel: TasksListViewModel by viewModels()
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        binding = FragmentTaskListBinding.inflate(inflater, container, false)
         return binding.root
-
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-         binding.myRecyclerView.adapter = adapter
-        adapter.submitList(taskList)
+        binding.recycler.adapter = adapter
+
         binding.floatingActionButton2.setOnClickListener {
-            // Create a new task
-            val newTask = Task(id = UUID.randomUUID().toString(), title = "Task ${taskList.size + 1}")
-            // Update task list
-            taskList = taskList + newTask
-            // Refresh adapter
-            refreshAdapter(taskList)
+            val intent = Intent(context, DetailActivity::class.java)
+            createTask.launch(intent)
+        }
+
+        lifecycleScope.launch {
+            fetchUser()
+        }
+
+        lifecycleScope.launch {
+            viewModel.tasksStateFlow.collect { newList ->
+                adapter.submitList(newList)
+            }
         }
     }
-    private fun refreshAdapter(newTasks: List<Task>) {
-        adapter.submitList(newTasks.toList())
+
+    override fun onResume() {
+        super.onResume()
+
+        viewModel.refresh()
     }
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null // Clear the binding when the view is destroyed
+
+    private suspend fun fetchUser() {
+        val user = Api.userWebService.fetchUser().body()!!
+        binding.userTextView.text = user.name
     }
+
 }
